@@ -33,14 +33,14 @@ export class AudioPlayer extends EventEmitter {
 
     logger.info(`Playing: ${filePath} at volume ${this.volume}%`);
 
-    // Volume: scale 0-100 maps to 0.0-3.0 (allow boost above 1.0 for WebRTC chain)
-    const volumeLevel = ((this.volume / 100) * 3).toFixed(2);
+    // ffmpeg always outputs at full 3x boost (compensates for WebRTC chain loss).
+    // Actual volume is controlled in real-time via PulseAudio sink volume.
     this.process = spawn('ffmpeg', [
       '-y',
       '-hide_banner',
       '-loglevel', 'error',
       '-i', filePath,
-      '-af', `volume=${volumeLevel}`,
+      '-af', 'volume=3.0',
       '-f', 'pulse',
       '-ac', '2',
       '-ar', '48000',
@@ -48,6 +48,9 @@ export class AudioPlayer extends EventEmitter {
     ], {
       env: { ...process.env, PULSE_SINK: 'meetbeats_sink' },
     });
+
+    // Apply current volume to PulseAudio sink
+    this.applyVolume();
 
     let stderr = '';
     this.process.stderr?.on('data', (data: Buffer) => {
@@ -110,8 +113,15 @@ export class AudioPlayer extends EventEmitter {
   setVolume(vol: number): void {
     this.volume = Math.max(0, Math.min(100, vol));
     logger.info(`Volume set to ${this.volume}%`);
-    // Volume change applies to the next song
-    // For live volume changes, we could use pactl set-sink-volume meetbeats_sink
+    this.applyVolume();
+  }
+
+  /** Apply volume to PulseAudio sink in real-time (affects current playback immediately) */
+  private applyVolume(): void {
+    // Map 0-100 to 0-100% of the PulseAudio sink.
+    // ffmpeg outputs at fixed 3x boost, so sink 100% = full volume.
+    const pct = `${this.volume}%`;
+    spawn('pactl', ['set-sink-volume', 'meetbeats_sink', pct]);
   }
 
   getVolume(): number {
