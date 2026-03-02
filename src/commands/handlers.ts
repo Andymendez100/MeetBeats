@@ -20,8 +20,12 @@ export interface HandlerDeps {
 type Handler = (cmd: ParsedCommand, deps: HandlerDeps) => Promise<void>;
 
 function formatDuration(seconds: number): string {
-  const m = Math.floor(seconds / 60);
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
   const s = seconds % 60;
+  if (h > 0) {
+    return `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  }
   return `${m}:${s.toString().padStart(2, '0')}`;
 }
 
@@ -58,7 +62,7 @@ async function playNextInQueue(deps: HandlerDeps): Promise<void> {
 const handlers: Record<string, Handler> = {
   async play(cmd, deps) {
     if (!cmd.args) {
-      await reply(deps, 'Usage: !play <url or search term>');
+      await reply(deps, `Usage: ${config.commandPrefix}play <url or search term>`);
       return;
     }
 
@@ -147,7 +151,7 @@ const handlers: Record<string, Handler> = {
   async volume(cmd, deps) {
     const vol = parseInt(cmd.args, 10);
     if (isNaN(vol) || vol < 0 || vol > 100) {
-      await reply(deps, 'Usage: !volume <0-100>');
+      await reply(deps, `Usage: ${config.commandPrefix}volume <0-100>`);
       return;
     }
     deps.audioPlayer.setVolume(vol);
@@ -156,7 +160,7 @@ const handlers: Record<string, Handler> = {
 
   async playlist(cmd, deps) {
     if (!cmd.args) {
-      await reply(deps, 'Usage: !playlist <youtube playlist url>');
+      await reply(deps, `Usage: ${config.commandPrefix}playlist <youtube playlist url>`);
       return;
     }
 
@@ -193,7 +197,7 @@ const handlers: Record<string, Handler> = {
   async remove(cmd, deps) {
     const pos = parseInt(cmd.args, 10);
     if (isNaN(pos) || pos < 1) {
-      await reply(deps, 'Usage: !remove <position>');
+      await reply(deps, `Usage: ${config.commandPrefix}remove <position>`);
       return;
     }
 
@@ -247,7 +251,7 @@ export async function handleCommand(cmd: ParsedCommand, deps: HandlerDeps): Prom
     await handler(cmd, deps);
   } catch (err) {
     logger.error(`Error handling command ${cmd.command}: ${err}`);
-    await reply(deps, `Error executing !${cmd.command}`);
+    await reply(deps, `Error executing ${config.commandPrefix}${cmd.command}`);
   }
 }
 

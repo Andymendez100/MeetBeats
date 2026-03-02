@@ -5,7 +5,7 @@ import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 import { selectors } from './selectors.js';
 
-const COOKIES_FILE = '/tmp/meetbeats/cookies.txt';
+import { config as appConfig } from '../utils/config.js';
 
 export class MeetManager extends EventEmitter {
   private browser: Browser | null = null;
@@ -152,7 +152,7 @@ export class MeetManager extends EventEmitter {
         lines.push(`${domain}\t${flag}\t${c.path}\t${secure}\t${expiry}\t${c.name}\t${c.value}`);
       }
 
-      fs.writeFileSync(COOKIES_FILE, lines.join('\n') + '\n');
+      fs.writeFileSync(appConfig.cookiesFile, lines.join('\n') + '\n');
       logger.info(`Exported ${cookies.length} cookies for yt-dlp`);
     } catch (err) {
       logger.warn(`Could not export cookies: ${err}`);

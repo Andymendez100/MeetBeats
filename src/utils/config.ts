@@ -12,4 +12,5 @@ export const config = {
   cacheDir: process.env.CACHE_DIR || '/tmp/meetbeats',
   maxCacheSizeMb: parseInt(process.env.MAX_CACHE_SIZE_MB || '500', 10),
   authStatePath: path.resolve(process.cwd(), 'auth', 'auth.json'),
+  cookiesFile: path.join(process.env.CACHE_DIR || '/tmp/meetbeats', 'cookies.txt'),
 };

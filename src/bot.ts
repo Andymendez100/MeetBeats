@@ -76,10 +76,12 @@ export class MeetBeatsBot {
       }
     });
 
-    // Handle meeting disconnection
+    // Handle unexpected meeting disconnection (e.g. kicked, network drop)
     this.meetManager.on('left', () => {
-      logger.info('Left the meeting');
-      this.shutdown();
+      if (!this.shuttingDown) {
+        logger.info('Meeting disconnected unexpectedly');
+        this.shutdown();
+      }
     });
 
     // Monitor participant count — leave if bot is alone
@@ -88,7 +90,7 @@ export class MeetBeatsBot {
     logger.info(`${config.botName} is running. Listening for commands in chat.`);
 
     // Announce ready in chat
-    await this.meetManager.sendChatMessage('MeetBeats is ready! Type !help for commands.').catch(() => {});
+    await this.meetManager.sendChatMessage(`${config.botName} is ready! Type ${config.commandPrefix}help for commands.`).catch(() => {});
 
     // Keep the process alive until shutdown
     await new Promise<void>((resolve) => {

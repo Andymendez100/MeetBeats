@@ -164,7 +164,7 @@ src/
     config.ts             # Environment variable config
     logger.ts             # Winston logger
 docker/
-  Dockerfile              # Multi-stage build with all dependencies
+  Dockerfile              # Container build with all dependencies
   docker-compose.yml      # Service definition
   entrypoint.sh           # Xvfb + PulseAudio setup + signal handling
   pulse-default.pa        # PulseAudio config

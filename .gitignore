@@ -4,3 +4,7 @@ auth/
 .env
 .worktrees/
 *.tgz
+
+# Debug artifacts
+*-player-script.js
+debug-screenshot.png

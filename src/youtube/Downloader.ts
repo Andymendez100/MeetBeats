@@ -3,8 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
-
-const COOKIES_FILE = '/tmp/meetbeats/cookies.txt';
+import { baseYtDlpArgs } from './ytdlp.js';
 
 export class Downloader {
   private cacheDir: string;
@@ -55,14 +54,11 @@ export class Downloader {
 
   private runYtDlp(url: string, outputTemplate: string): Promise<void> {
     return new Promise((resolve, reject) => {
-      const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
       const args = [
-        ...cookieArgs,
-        '--js-runtimes', 'node',               // Use Node.js for YouTube player JS extraction
-        '--remote-components', 'ejs:github',   // Download challenge solver for format signatures
-        '-f', 'bestaudio/best',                // Prefer audio-only; fall back to best combined
-        '-x',                                  // Extract audio
-        '--audio-format', 'opus',              // Convert to opus (lightweight, ffmpeg-friendly)
+        ...baseYtDlpArgs(),
+        '-f', 'bestaudio/best',
+        '-x',
+        '--audio-format', 'opus',
         '-o', `${outputTemplate}.%(ext)s`,
         '--no-playlist',
         '--no-warnings',

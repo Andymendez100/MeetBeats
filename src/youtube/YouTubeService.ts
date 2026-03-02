@@ -1,9 +1,7 @@
 import { spawn } from 'child_process';
-import fs from 'fs';
 import { logger } from '../utils/logger.js';
 import { Song } from '../audio/types.js';
-
-const COOKIES_FILE = '/tmp/meetbeats/cookies.txt';
+import { baseYtDlpArgs } from './ytdlp.js';
 
 interface YtDlpResult {
   id: string;
@@ -101,22 +99,9 @@ export class YouTubeService {
     }
   }
 
-  /** Build common yt-dlp args, including cookies if available */
-  private cookieArgs(): string[] {
-    if (fs.existsSync(COOKIES_FILE)) {
-      return ['--cookies', COOKIES_FILE];
-    }
-    return [];
-  }
-
   private runYtDlp(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
-      const fullArgs = [
-        ...this.cookieArgs(),
-        '--js-runtimes', 'node',
-        '--remote-components', 'ejs:github',
-        ...args,
-      ];
+      const fullArgs = [...baseYtDlpArgs(), ...args];
       const proc = spawn('yt-dlp', fullArgs);
 
       let stdout = '';

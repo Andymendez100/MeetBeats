@@ -7,9 +7,3 @@ export interface Song {
 }
 
 export type LoopMode = 'off' | 'song' | 'queue';
-
-export interface QueueState {
-  songs: Song[];
-  currentIndex: number;
-  loopMode: LoopMode;
-}

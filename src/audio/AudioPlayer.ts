@@ -81,19 +81,26 @@ export class AudioPlayer extends EventEmitter {
   }
 
   async stop(): Promise<void> {
-    if (this.process) {
-      // If paused (SIGSTOP'd), resume first so it can receive SIGTERM
-      if (this.paused) {
-        this.process.kill('SIGCONT');
-      }
+    if (!this.process) {
       this.playing = false;
       this.paused = false;
-      this.process.kill('SIGTERM');
-      this.process = null;
-    } else {
-      this.playing = false;
-      this.paused = false;
+      return;
     }
+
+    const proc = this.process;
+    // If paused (SIGSTOP'd), resume first so it can receive SIGTERM
+    if (this.paused) {
+      proc.kill('SIGCONT');
+    }
+    this.playing = false;
+    this.paused = false;
+    this.process = null;
+
+    // Wait for the ffmpeg process to actually exit
+    await new Promise<void>((resolve) => {
+      proc.on('close', resolve);
+      proc.kill('SIGTERM');
+    });
   }
 
   async pause(): Promise<void> {
