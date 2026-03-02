@@ -1,0 +1,18 @@
+#!/usr/bin/pulseaudio -nF
+
+# PulseAudio config for MeetBeats
+# Creates a virtual null sink that Chrome will use as its microphone input
+
+.fail
+
+# Load native protocol for local communication
+load-module module-native-protocol-unix
+
+# Create a null sink — audio played here becomes available as a source
+load-module module-null-sink sink_name=meetbeats_sink sink_properties=device.description="MeetBeats_Virtual_Mic"
+
+# Set the null sink's monitor as the default source (Chrome picks this up as the mic)
+set-default-source meetbeats_sink.monitor
+
+# Set the null sink as the default sink (ffplay outputs here)
+set-default-sink meetbeats_sink

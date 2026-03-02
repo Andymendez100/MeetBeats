@@ -1,6 +1,6 @@
 node_modules/
 dist/
-auth/
-.env
+.git
 .worktrees/
 *.tgz
+.env

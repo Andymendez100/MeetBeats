@@ -1,0 +1,24 @@
+services:
+  meetbeats:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    container_name: meetbeats
+    restart: unless-stopped
+    environment:
+      - MEET_URL=${MEET_URL}
+      - GOOGLE_EMAIL=${GOOGLE_EMAIL:-}
+      - BOT_NAME=${BOT_NAME:-MeetBeats}
+      - COMMAND_PREFIX=${COMMAND_PREFIX:-!}
+      - DEFAULT_VOLUME=${DEFAULT_VOLUME:-50}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    volumes:
+      # Mount auth state from host (created by setup-auth)
+      - ../auth:/app/auth:ro
+      # Persistent cache for downloaded audio
+      - meetbeats-cache:/tmp/meetbeats
+    # Needed for PulseAudio and Xvfb
+    shm_size: '2gb'
+
+volumes:
+  meetbeats-cache:
