@@ -58,8 +58,11 @@ export class Downloader {
       const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
       const args = [
         ...cookieArgs,
-        '-x',                          // Extract audio
-        '--audio-format', 'opus',      // Lightweight format ffplay supports
+        '--js-runtimes', 'node',               // Use Node.js for YouTube player JS extraction
+        '--remote-components', 'ejs:github',   // Download challenge solver for format signatures
+        '-f', 'bestaudio/best',                // Prefer audio-only; fall back to best combined
+        '-x',                                  // Extract audio
+        '--audio-format', 'opus',              // Convert to opus (lightweight, ffmpeg-friendly)
         '-o', `${outputTemplate}.%(ext)s`,
         '--no-playlist',
         '--no-warnings',

@@ -111,7 +111,12 @@ export class YouTubeService {
 
   private runYtDlp(args: string[]): Promise<string> {
     return new Promise((resolve, reject) => {
-      const fullArgs = [...this.cookieArgs(), ...args];
+      const fullArgs = [
+        ...this.cookieArgs(),
+        '--js-runtimes', 'node',
+        '--remote-components', 'ejs:github',
+        ...args,
+      ];
       const proc = spawn('yt-dlp', fullArgs);
 
       let stdout = '';
