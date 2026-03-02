@@ -164,6 +164,18 @@ export class ChatMonitor extends EventEmitter {
 
         observer.observe(container, { childList: true, subtree: true });
         console.log('[MeetBeats] MutationObserver active on chat container');
+
+        // Self-healing: detect when Meet re-renders the chat container (detaches our node).
+        // When that happens, disconnect the dead observer and re-attach to the new container.
+        const watchdog = setInterval(() => {
+          if (!document.body.contains(container)) {
+            console.log('[MeetBeats] Chat container was detached from DOM — re-attaching observer');
+            observer.disconnect();
+            clearInterval(watchdog);
+            retryCount = 0;
+            setupObserver();
+          }
+        }, 3000);
       };
 
       setupObserver();

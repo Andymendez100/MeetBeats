@@ -28,9 +28,13 @@ const VALID_COMMANDS = new Set([
 
 export function parseCommand(sender: string, text: string): ParsedCommand | null {
   const trimmed = text.trim();
-  if (!trimmed.startsWith(config.commandPrefix)) return null;
 
-  const withoutPrefix = trimmed.slice(config.commandPrefix.length);
+  // Accept both the configured prefix (default "!") and "/" as command prefixes
+  const prefixes = [config.commandPrefix, '/'];
+  const matchedPrefix = prefixes.find(p => trimmed.startsWith(p));
+  if (!matchedPrefix) return null;
+
+  const withoutPrefix = trimmed.slice(matchedPrefix.length);
   const spaceIndex = withoutPrefix.indexOf(' ');
 
   let command: string;

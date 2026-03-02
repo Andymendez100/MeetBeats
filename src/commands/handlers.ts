@@ -5,6 +5,7 @@ import { YouTubeService } from '../youtube/YouTubeService.js';
 import { Downloader } from '../youtube/Downloader.js';
 import { MeetManager } from '../meet/MeetManager.js';
 import { logger } from '../utils/logger.js';
+import { config } from '../utils/config.js';
 import { Song } from '../audio/types.js';
 
 export interface HandlerDeps {
@@ -39,6 +40,7 @@ async function playNextInQueue(deps: HandlerDeps): Promise<void> {
   try {
     // Download if needed
     if (!song.filePath) {
+      await reply(deps, `Downloading: ${song.title}`);
       song.filePath = await deps.downloader.download(song.url);
     }
 
@@ -71,6 +73,7 @@ const handlers: Record<string, Handler> = {
       song = { ...info, requestedBy: cmd.sender };
     } else {
       // Search
+      await reply(deps, `Searching: ${cmd.args}`);
       const result = await deps.youtubeService.search(cmd.args);
       if (!result) {
         await reply(deps, `No results found for: ${cmd.args}`);
@@ -203,20 +206,21 @@ const handlers: Record<string, Handler> = {
   },
 
   async help(_cmd, deps) {
+    const prefix = config.commandPrefix;
     const helpText = [
-      'MeetBeats Commands:',
-      '!play <url|search> - Play a song',
-      '!skip - Skip current song',
-      '!stop - Stop and clear queue',
-      '!pause / !resume - Pause/resume',
-      '!queue - Show queue',
-      '!np - Now playing',
-      '!volume <0-100> - Set volume',
-      '!playlist <url> - Queue a playlist',
-      '!shuffle - Shuffle queue',
-      '!loop - Toggle loop (off/song/queue)',
-      '!remove <pos> - Remove from queue',
-      '!exit - Bot leaves the meeting',
+      'MeetBeats Commands (use ! or /):',
+      `${prefix}play <url|search> - Play a song`,
+      `${prefix}skip - Skip current song`,
+      `${prefix}stop - Stop and clear queue`,
+      `${prefix}pause / ${prefix}resume - Pause/resume`,
+      `${prefix}queue - Show queue`,
+      `${prefix}np - Now playing`,
+      `${prefix}volume <0-100> - Set volume`,
+      `${prefix}playlist <url> - Queue a playlist`,
+      `${prefix}shuffle - Shuffle queue`,
+      `${prefix}loop - Toggle loop (off/song/queue)`,
+      `${prefix}remove <pos> - Remove from queue`,
+      `${prefix}exit - Bot leaves the meeting`,
     ].join('\n');
 
     await reply(deps, helpText);
