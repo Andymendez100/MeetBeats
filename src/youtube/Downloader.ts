@@ -4,6 +4,8 @@ import path from 'path';
 import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 
+const COOKIES_FILE = '/tmp/meetbeats/cookies.txt';
+
 export class Downloader {
   private cacheDir: string;
 
@@ -53,7 +55,9 @@ export class Downloader {
 
   private runYtDlp(url: string, outputTemplate: string): Promise<void> {
     return new Promise((resolve, reject) => {
+      const cookieArgs = fs.existsSync(COOKIES_FILE) ? ['--cookies', COOKIES_FILE] : [];
       const args = [
+        ...cookieArgs,
         '-x',                          // Extract audio
         '--audio-format', 'opus',      // Lightweight format ffplay supports
         '-o', `${outputTemplate}.%(ext)s`,

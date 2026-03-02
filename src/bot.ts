@@ -51,6 +51,9 @@ export class MeetBeatsBot {
     // Join the meeting
     await this.meetManager.join(meetUrl);
 
+    // Export Google cookies so yt-dlp can access YouTube
+    await this.meetManager.exportCookiesForYtDlp();
+
     // Start chat monitoring
     await this.chatMonitor.start();
 
@@ -83,6 +86,9 @@ export class MeetBeatsBot {
     this.startParticipantMonitor();
 
     logger.info(`${config.botName} is running. Listening for commands in chat.`);
+
+    // Announce ready in chat
+    await this.meetManager.sendChatMessage('MeetBeats is ready! Type !help for commands.').catch(() => {});
 
     // Keep the process alive until shutdown
     await new Promise<void>((resolve) => {

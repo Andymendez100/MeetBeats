@@ -2,6 +2,7 @@ import { Page } from 'playwright';
 import { EventEmitter } from 'events';
 import { logger } from '../utils/logger.js';
 import { MeetManager } from './MeetManager.js';
+import { selectors } from './selectors.js';
 
 export interface ChatMessage {
   sender: string;
@@ -11,6 +12,7 @@ export interface ChatMessage {
 
 export class ChatMonitor extends EventEmitter {
   private running = false;
+  private healthCheckInterval: ReturnType<typeof setInterval> | null = null;
 
   constructor(private meetManager: MeetManager) {
     super();
@@ -22,10 +24,21 @@ export class ChatMonitor extends EventEmitter {
     // Ensure chat panel is open
     await this.meetManager.openChatPanel();
 
-    // Wait for the chat message list container to appear
-    await page.waitForSelector('div[jsname="xySENc"]', { state: 'attached', timeout: 10000 }).catch(() => {
-      logger.warn('Chat message list container not found, will retry in evaluate');
-    });
+    // Wait for any chat container candidate to appear
+    let containerFound = false;
+    for (const sel of selectors.chatContainerCandidates) {
+      try {
+        await page.waitForSelector(sel, { state: 'attached', timeout: 3000 });
+        logger.info(`Chat container found via: ${sel}`);
+        containerFound = true;
+        break;
+      } catch {
+        // Try next
+      }
+    }
+    if (!containerFound) {
+      logger.warn('No chat container found with any known selector — observer will retry in-page');
+    }
 
     // Expose a function that the browser context can call to send messages to Node.js
     await page.exposeFunction('__meetbeats_onChatMessage', (sender: string, text: string) => {
@@ -38,28 +51,33 @@ export class ChatMonitor extends EventEmitter {
       this.emit('message', message);
     });
 
+    // Pass the candidate selectors into the browser context
+    const containerCandidates = selectors.chatContainerCandidates;
+
     // Inject MutationObserver to watch for new chat messages
-    await page.evaluate(() => {
+    await page.evaluate((candidates: string[]) => {
       const findChatContainer = (): Element | null => {
-        // Primary: the message list container
-        const primary = document.querySelector('div[jsname="xySENc"]');
-        if (primary) return primary;
-
-        // Fallback: the chat panel itself
-        const panel = document.querySelector('#ME4pNd');
-        if (panel) return panel;
-
+        for (const sel of candidates) {
+          const el = document.querySelector(sel);
+          if (el) {
+            console.log(`[MeetBeats] Chat container matched: ${sel}`);
+            return el;
+          }
+        }
         return null;
       };
 
       let retryCount = 0;
-      const MAX_RETRIES = 30;
+      const MAX_RETRIES = 60;
 
       const setupObserver = () => {
         const container = findChatContainer();
         if (!container) {
           retryCount++;
           if (retryCount <= MAX_RETRIES) {
+            if (retryCount % 10 === 0) {
+              console.log(`[MeetBeats] Chat container not found yet (retry ${retryCount}/${MAX_RETRIES})`);
+            }
             setTimeout(setupObserver, 1000);
           } else {
             console.error('[MeetBeats] Could not find chat container after retries');
@@ -67,39 +85,63 @@ export class ChatMonitor extends EventEmitter {
           return;
         }
 
-        console.log('[MeetBeats] Chat container found, attaching observer');
+        console.log(`[MeetBeats] Chat observer attached to: ${container.tagName}#${container.id || ''}.${container.className || ''}`);
 
-        // Track seen message IDs to avoid duplicates
+        // Deduplication: track by message-id AND by text content (with short time window)
         const seenMessageIds = new Set<string>();
+        const recentTexts = new Map<string, number>(); // text -> timestamp
+
+        const isDuplicate = (msgId: string, text: string): boolean => {
+          // Primary: message-id based dedup
+          if (msgId && seenMessageIds.has(msgId)) return true;
+          if (msgId) seenMessageIds.add(msgId);
+
+          // Secondary: text-based dedup within 2-second window
+          const now = Date.now();
+          const lastSeen = recentTexts.get(text);
+          if (lastSeen && now - lastSeen < 2000) return true;
+          recentTexts.set(text, now);
+
+          // Cleanup old entries
+          if (seenMessageIds.size > 500) {
+            const entries = Array.from(seenMessageIds);
+            for (let i = 0; i < 250; i++) seenMessageIds.delete(entries[i]);
+          }
+          if (recentTexts.size > 100) {
+            const cutoff = now - 5000;
+            for (const [k, v] of recentTexts) {
+              if (v < cutoff) recentTexts.delete(k);
+            }
+          }
+
+          return false;
+        };
 
         const processMessage = (node: HTMLElement) => {
-          // Skip the bot's own messages (they have class chmVPb)
+          // Skip the bot's own messages.
+          // In Google Meet, your own messages don't have a sender name element (div.poVWob).
+          // Also check for the chmVPb class marker.
           if (node.querySelector('.chmVPb')) return;
-
-          // Get message ID for deduplication
-          const msgEl = node.querySelector('[data-message-id]');
-          const msgId = msgEl?.getAttribute('data-message-id') || '';
-          if (msgId && seenMessageIds.has(msgId)) return;
-          if (msgId) seenMessageIds.add(msgId);
+          if (node.classList.contains('chmVPb')) return;
 
           // Extract sender name
           const senderEl = node.querySelector('div.poVWob');
-          const sender = senderEl?.textContent?.trim() || 'Unknown';
+          const sender = senderEl?.textContent?.trim() || '';
+
+          // No sender element = bot's own message — skip it
+          if (!sender) return;
 
           // Extract message text
           const textEl = node.querySelector('div[jsname="dTKtvb"]');
           const text = textEl?.textContent?.trim() || '';
-
           if (!text) return;
 
-          // Prevent memory leak
-          if (seenMessageIds.size > 500) {
-            const entries = Array.from(seenMessageIds);
-            for (let i = 0; i < 250; i++) {
-              seenMessageIds.delete(entries[i]);
-            }
-          }
+          // Dedup check
+          const msgEl = node.querySelector('[data-message-id]');
+          const msgId = msgEl?.getAttribute('data-message-id') || '';
+          if (isDuplicate(msgId, text)) return;
 
+          console.log(`[MeetBeats] Chat received: ${sender}: ${text}`);
           (window as any).__meetbeats_onChatMessage(sender, text);
         };
 
@@ -108,11 +150,11 @@ export class ChatMonitor extends EventEmitter {
             for (const node of mutation.addedNodes) {
               if (!(node instanceof HTMLElement)) continue;
 
-              // Check if this is a message item (jsname="Ypafjf")
+              // Only process direct message items (jsname="Ypafjf")
               if (node.getAttribute('jsname') === 'Ypafjf') {
                 processMessage(node);
               } else {
-                // Could be a wrapper — check children
+                // Check children for message items
                 const msgItems = node.querySelectorAll('div[jsname="Ypafjf"]');
                 msgItems.forEach((item) => processMessage(item as HTMLElement));
               }
@@ -121,13 +163,33 @@ export class ChatMonitor extends EventEmitter {
         });
 
         observer.observe(container, { childList: true, subtree: true });
+        console.log('[MeetBeats] MutationObserver active on chat container');
       };
 
       setupObserver();
-    });
+    }, containerCandidates);
 
     this.running = true;
     logger.info('Chat monitor started');
+
+    // Periodic health check — re-open chat panel if it gets closed
+    this.healthCheckInterval = setInterval(async () => {
+      if (!this.running) return;
+      try {
+        const p = this.meetManager.getPage();
+        let chatOpen = false;
+        for (const inputSel of selectors.chatInputCandidates) {
+          chatOpen = await p.locator(inputSel).first().isVisible().catch(() => false);
+          if (chatOpen) break;
+        }
+        if (!chatOpen) {
+          logger.warn('Chat panel closed — re-opening');
+          await this.meetManager.openChatPanel();
+        }
+      } catch {
+        // Page may not be available
+      }
+    }, 10000);
   }
 
   isRunning(): boolean {
@@ -136,6 +198,10 @@ export class ChatMonitor extends EventEmitter {
 
   stop(): void {
     this.running = false;
+    if (this.healthCheckInterval) {
+      clearInterval(this.healthCheckInterval);
+      this.healthCheckInterval = null;
+    }
     logger.info('Chat monitor stopped');
   }
 }

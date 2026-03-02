@@ -90,4 +90,26 @@ fi
 
 echo ""
 echo "=== Starting MeetBeats Bot ==="
-exec node dist/index.js "$@"
+
+# Start node in a new session (setsid) so Docker's SIGINT doesn't reach Chrome.
+# Without this, Ctrl+C kills Chrome before our shutdown code can leave the meeting.
+# The trap catches SIGINT/SIGTERM on PID 1 and forwards SIGTERM to node only.
+setsid node dist/index.js "$@" &
+NODE_PID=$!
+
+cleanup() {
+  # Send SIGTERM to node only (not Chrome) — node's handler will leave the meeting
+  kill -TERM $NODE_PID 2>/dev/null
+  # Give node time to click leave and close browser gracefully
+  local i=0
+  while kill -0 $NODE_PID 2>/dev/null && [ $i -lt 10 ]; do
+    sleep 1
+    i=$((i + 1))
+  done
+  # If still alive, force kill the session group
+  kill -KILL -$NODE_PID 2>/dev/null
+  exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+wait $NODE_PID

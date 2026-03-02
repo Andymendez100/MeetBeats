@@ -2,6 +2,8 @@
  * Centralized DOM selectors for Google Meet UI.
  * When Google updates the Meet UI, only this file needs updating.
  * Prefer ARIA-based selectors for stability.
+ *
+ * Arrays = ordered fallbacks (tried first → last). Google changes these often.
  */
 export const selectors = {
   // Pre-join screen
@@ -11,13 +13,35 @@ export const selectors = {
   joinButton: '[aria-label="Join now"], button:has-text("Join now"), button:has-text("Ask to join"), button:has-text("Switch here")',
   dismissButton: 'button:has-text("Got it"), button:has-text("Dismiss")',
 
-  // In-call UI
+  // In-call UI — chat button fallbacks (Google changes aria-labels across versions)
+  chatButtonCandidates: [
+    'button[aria-label="Chat with everyone"]',
+    'button[aria-label="Chat"]',
+    'button[aria-label="Open chat"]',
+    'button[aria-label="In-call messages"]',
+    'button[aria-label*="chat" i]',
+  ],
+  // Legacy single selector (kept for backward compat)
   chatButton: 'button[aria-label="Chat with everyone"]',
   chatPanel: '#ME4pNd',
+  // Chat input fallbacks
+  chatInputCandidates: [
+    'textarea[aria-label="Send a message"]',
+    'textarea[aria-label="Send a message to everyone"]',
+    '[aria-label="Send a message"][contenteditable="true"]',
+    '[aria-label="Send a message to everyone"][contenteditable="true"]',
+    'textarea[aria-label*="message" i]',
+  ],
   chatInput: 'textarea[aria-label="Send a message"]',
   chatSendButton: 'button[aria-label="Send a message"]',
 
-  // Chat message container (attach MutationObserver here)
+  // Chat message container fallbacks (attach MutationObserver here)
+  chatContainerCandidates: [
+    'div[jsname="xySENc"]',
+    '#ME4pNd',
+    '[aria-label="Chat messages"]',
+    '[role="log"]',
+  ],
   chatMessageList: 'div[jsname="xySENc"]',
   // Individual message wrapper
   chatMessageItem: 'div[jsname="Ypafjf"]',

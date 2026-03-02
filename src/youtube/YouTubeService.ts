@@ -1,46 +1,48 @@
-import { Innertube, UniversalCache } from 'youtubei.js';
+import { spawn } from 'child_process';
+import fs from 'fs';
 import { logger } from '../utils/logger.js';
 import { Song } from '../audio/types.js';
 
-type InnertubeInstance = InstanceType<typeof Innertube>;
+const COOKIES_FILE = '/tmp/meetbeats/cookies.txt';
 
+interface YtDlpResult {
+  id: string;
+  title: string;
+  duration: number;
+  url: string;
+  webpage_url: string;
+}
+
+/**
+ * YouTube search and metadata via yt-dlp.
+ * Replaces youtubei.js to avoid parser errors from YouTube API changes.
+ */
 export class YouTubeService {
-  private yt: InnertubeInstance | null = null;
-
   async init(): Promise<void> {
-    this.yt = await Innertube.create({
-      cache: new UniversalCache(true),
-    });
-    logger.info('YouTube service initialized');
-  }
-
-  getInnertube(): InnertubeInstance {
-    if (!this.yt) throw new Error('YouTubeService not initialized. Call init() first.');
-    return this.yt;
-  }
-
-  private getYt(): InnertubeInstance {
-    return this.getInnertube();
+    try {
+      await this.runYtDlp(['--version']);
+      logger.info('YouTube service initialized (yt-dlp)');
+    } catch (err) {
+      throw new Error(`yt-dlp not found. Install it: pip install yt-dlp\n${err}`);
+    }
   }
 
   async search(query: string): Promise<Omit<Song, 'requestedBy'> | null> {
     try {
-      const results = await this.getYt().search(query, { type: 'video' });
-      const videos = results.videos;
+      // --flat-playlist skips full video resolution (no format selection),
+      // just returns search result metadata — title, url, duration
+      const result = await this.runYtDlp([
+        `ytsearch1:${query}`,
+        '--dump-json',
+        '--flat-playlist',
+        '--no-warnings',
+      ]);
 
-      if (!videos || videos.length === 0) {
-        logger.warn(`No search results for: ${query}`);
-        return null;
-      }
-
-      const video = videos[0] as any;
-      const videoId = video.id || video.video_id;
-      const durationText: string = video.duration?.text || '0:00';
-
+      const data: YtDlpResult = JSON.parse(result);
       return {
-        title: video.title?.text || video.title || 'Unknown',
-        url: `https://www.youtube.com/watch?v=${videoId}`,
-        duration: this.parseDuration(durationText),
+        title: data.title || 'Unknown',
+        url: data.webpage_url || data.url || `https://www.youtube.com/watch?v=${data.id}`,
+        duration: data.duration || 0,
       };
     } catch (err) {
       logger.error(`YouTube search failed: ${err}`);
@@ -50,19 +52,20 @@ export class YouTubeService {
 
   async getInfo(url: string): Promise<Omit<Song, 'requestedBy'> | null> {
     try {
-      const videoId = this.extractVideoId(url);
-      if (!videoId) {
-        logger.warn(`Could not extract video ID from: ${url}`);
-        return null;
-      }
+      const result = await this.runYtDlp([
+        url,
+        '--dump-json',
+        '--no-warnings',
+        '--no-playlist',
+        '--skip-download',
+        '-f', 'bestaudio/best/worst',
+      ]);
 
-      const info = await this.getYt().getBasicInfo(videoId);
-      const details = info.basic_info;
-
+      const data: YtDlpResult = JSON.parse(result);
       return {
-        title: details.title || 'Unknown',
-        url: `https://www.youtube.com/watch?v=${videoId}`,
-        duration: details.duration || 0,
+        title: data.title || 'Unknown',
+        url: data.webpage_url || url,
+        duration: data.duration || 0,
       };
     } catch (err) {
       logger.error(`Failed to get video info: ${err}`);
@@ -72,28 +75,25 @@ export class YouTubeService {
 
   async getPlaylist(url: string): Promise<Omit<Song, 'requestedBy'>[]> {
     try {
-      const playlistId = this.extractPlaylistId(url);
-      if (!playlistId) {
-        logger.warn(`Could not extract playlist ID from: ${url}`);
-        return [];
-      }
+      const result = await this.runYtDlp([
+        url,
+        '--dump-json',
+        '--no-warnings',
+        '--flat-playlist',
+        '--skip-download',
+      ]);
 
-      const playlist = await this.getYt().getPlaylist(playlistId);
       const songs: Omit<Song, 'requestedBy'>[] = [];
-
-      for (const item of playlist.items) {
-        const video = item as any;
-        const videoId = video.id || video.video_id;
-        if (!videoId) continue;
-
+      for (const line of result.split('\n').filter(Boolean)) {
+        const data: YtDlpResult = JSON.parse(line);
         songs.push({
-          title: video.title?.text || video.title || 'Unknown',
-          url: `https://www.youtube.com/watch?v=${videoId}`,
-          duration: this.parseDuration(video.duration?.text || '0:00'),
+          title: data.title || 'Unknown',
+          url: data.webpage_url || data.url || `https://www.youtube.com/watch?v=${data.id}`,
+          duration: data.duration || 0,
         });
       }
 
-      logger.info(`Loaded ${songs.length} songs from playlist ${playlistId}`);
+      logger.info(`Loaded ${songs.length} songs from playlist`);
       return songs;
     } catch (err) {
       logger.error(`Failed to load playlist: ${err}`);
@@ -101,33 +101,40 @@ export class YouTubeService {
     }
   }
 
-  private extractVideoId(url: string): string | null {
-    const patterns = [
-      /(?:youtube\.com\/watch\?v=|youtu\.be\/)([a-zA-Z0-9_-]{11})/,
-      /youtube\.com\/embed\/([a-zA-Z0-9_-]{11})/,
-      /youtube\.com\/v\/([a-zA-Z0-9_-]{11})/,
-    ];
-
-    for (const pattern of patterns) {
-      const match = url.match(pattern);
-      if (match) return match[1];
+  /** Build common yt-dlp args, including cookies if available */
+  private cookieArgs(): string[] {
+    if (fs.existsSync(COOKIES_FILE)) {
+      return ['--cookies', COOKIES_FILE];
     }
-
-    // Maybe it's just a video ID
-    if (/^[a-zA-Z0-9_-]{11}$/.test(url)) return url;
-
-    return null;
+    return [];
   }
 
-  private extractPlaylistId(url: string): string | null {
-    const match = url.match(/[?&]list=([a-zA-Z0-9_-]+)/);
-    return match ? match[1] : null;
-  }
+  private runYtDlp(args: string[]): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const fullArgs = [...this.cookieArgs(), ...args];
+      const proc = spawn('yt-dlp', fullArgs);
 
-  private parseDuration(text: string): number {
-    const parts = text.split(':').map(Number);
-    if (parts.length === 3) return parts[0] * 3600 + parts[1] * 60 + parts[2];
-    if (parts.length === 2) return parts[0] * 60 + parts[1];
-    return parts[0] || 0;
+      let stdout = '';
+      let stderr = '';
+
+      proc.stdout.on('data', (data: Buffer) => {
+        stdout += data.toString();
+      });
+      proc.stderr.on('data', (data: Buffer) => {
+        stderr += data.toString();
+      });
+
+      proc.on('close', (code) => {
+        if (code === 0) {
+          resolve(stdout.trim());
+        } else {
+          reject(new Error(`yt-dlp exited with code ${code}: ${stderr}`));
+        }
+      });
+
+      proc.on('error', (err) => {
+        reject(err);
+      });
+    });
   }
 }

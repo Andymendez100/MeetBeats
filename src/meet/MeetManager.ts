@@ -5,6 +5,8 @@ import { config } from '../utils/config.js';
 import { logger } from '../utils/logger.js';
 import { selectors } from './selectors.js';
 
+const COOKIES_FILE = '/tmp/meetbeats/cookies.txt';
+
 export class MeetManager extends EventEmitter {
   private browser: Browser | null = null;
   private context: BrowserContext | null = null;
@@ -57,7 +59,11 @@ export class MeetManager extends EventEmitter {
     // Forward browser console logs to Node.js for diagnostics
     this.page.on('console', (msg) => {
       const text = msg.text();
-      if (text.includes('[MeetBeats]') || text.includes('getUserMedia') || text.includes('audio')) {
+      if (text.includes('[MeetBeats]')) {
+        // MeetBeats logs always show at info level for visibility
+        const level = msg.type() === 'error' ? 'error' : 'info';
+        logger[level](`[Browser] ${text}`);
+      } else if (text.includes('getUserMedia') || text.includes('audio')) {
         logger.debug(`[Browser] ${text}`);
       }
     });
@@ -122,14 +128,44 @@ export class MeetManager extends EventEmitter {
     this.emit('joined');
   }
 
+  /**
+   * Export browser cookies in Netscape format for yt-dlp.
+   * Google session cookies from the Playwright browser let yt-dlp
+   * access YouTube without being blocked as a bot.
+   */
+  async exportCookiesForYtDlp(): Promise<void> {
+    if (!this.context) return;
+    try {
+      const cookies = await this.context.cookies([
+        'https://www.youtube.com',
+        'https://youtube.com',
+        'https://accounts.google.com',
+        'https://www.google.com',
+      ]);
+
+      const lines = ['# Netscape HTTP Cookie File', '# Exported by MeetBeats'];
+      for (const c of cookies) {
+        const domain = c.domain.startsWith('.') ? c.domain : `.${c.domain}`;
+        const flag = domain.startsWith('.') ? 'TRUE' : 'FALSE';
+        const secure = c.secure ? 'TRUE' : 'FALSE';
+        const expiry = c.expires > 0 ? Math.floor(c.expires) : '0';
+        lines.push(`${domain}\t${flag}\t${c.path}\t${secure}\t${expiry}\t${c.name}\t${c.value}`);
+      }
+
+      fs.writeFileSync(COOKIES_FILE, lines.join('\n') + '\n');
+      logger.info(`Exported ${cookies.length} cookies for yt-dlp`);
+    } catch (err) {
+      logger.warn(`Could not export cookies: ${err}`);
+    }
+  }
+
   private async dismissModals(): Promise<void> {
     if (!this.page) return;
-    // Try clicking any "Got it" / "Dismiss" / "OK" buttons that are modal dismissals
+    // Only dismiss actual modal/banner buttons — NOT buttons inside the chat panel.
+    // Use :not() to exclude buttons within the chat panel or message areas.
     const dismissSelectors = [
-      'button:has-text("Got it")',
-      'button:has-text("Dismiss")',
-      'button:has-text("OK")',
-      'button:has-text("Close")',
+      'button:has-text("Got it"):not([aria-label*="chat" i])',
+      'button:has-text("Dismiss"):not([aria-label*="chat" i])',
     ];
 
     for (const sel of dismissSelectors) {
@@ -138,7 +174,6 @@ export class MeetManager extends EventEmitter {
         if (await btn.isVisible({ timeout: 500 })) {
           await btn.click({ timeout: 1000 });
           logger.info(`Dismissed modal via: ${sel}`);
-          // Wait briefly and try again in case there are stacked modals
           await this.page.waitForTimeout(500);
         }
       } catch {
@@ -235,8 +270,15 @@ export class MeetManager extends EventEmitter {
       await settingsItem.click();
       await this.page.waitForTimeout(1000);
 
-      // Settings opens on Audio tab by default.
-      // Toggles are: button[role="switch"][aria-label="X"][aria-checked="true|false"]
+      // Explicitly click Audio tab in case settings remembers a different tab
+      const audioTab = this.page.locator('[role="tab"]:has-text("Audio")').first();
+      try {
+        await audioTab.waitFor({ state: 'visible', timeout: 3000 });
+        await audioTab.click();
+        await this.page.waitForTimeout(500);
+      } catch {
+        logger.warn('Audio tab not found — may already be selected');
+      }
 
       // 3. Disable "Studio sound" — "Filters out sound from your mic that isn't speech"
       await this.toggleSwitch('Studio sound', false);
@@ -260,7 +302,11 @@ export class MeetManager extends EventEmitter {
   private async toggleSwitch(label: string, targetState: boolean): Promise<void> {
     if (!this.page) return;
     const toggle = this.page.locator(`button[role="switch"][aria-label="${label}"]`).first();
-    if (await toggle.isVisible({ timeout: 3000 })) {
+    try {
+      // waitFor actually waits for the element to appear and be visible,
+      // unlike isVisible() which is a snapshot check
+      await toggle.waitFor({ state: 'visible', timeout: 5000 });
+      await toggle.scrollIntoViewIfNeeded();
       const checked = await toggle.getAttribute('aria-checked');
       const isOn = checked === 'true';
       if (isOn !== targetState) {
@@ -269,7 +315,7 @@ export class MeetManager extends EventEmitter {
       } else {
         logger.info(`${label}: already ${targetState ? 'on' : 'off'}`);
       }
-    } else {
+    } catch {
       logger.warn(`${label} toggle not found`);
     }
     await this.page.waitForTimeout(300);
@@ -284,33 +330,67 @@ export class MeetManager extends EventEmitter {
     // Ensure chat panel is open
     await this.openChatPanel();
 
-    // Type and send message
-    const chatInput = this.page.locator(selectors.chatInput).first();
-    await chatInput.waitFor({ state: 'visible', timeout: 5000 });
-    await chatInput.fill(message);
-    await chatInput.press('Enter');
+    // Find the chat input using fallback selectors
+    for (const inputSel of selectors.chatInputCandidates) {
+      try {
+        const chatInput = this.page.locator(inputSel).first();
+        if (await chatInput.isVisible({ timeout: 1000 })) {
+          await chatInput.fill(message);
+          await chatInput.press('Enter');
+          return;
+        }
+      } catch {
+        // Try next
+      }
+    }
+
+    logger.warn('Could not find chat input to send message');
   }
 
   async openChatPanel(): Promise<void> {
     if (!this.page) return;
 
-    try {
-      // Check if chat input is already visible (panel is open)
-      const chatInput = this.page.locator(selectors.chatInput).first();
-      const isOpen = await chatInput.isVisible().catch(() => false);
-      if (isOpen) return;
-    } catch {
-      // Not open
+    // Check if chat input is already visible via any candidate selector
+    for (const inputSel of selectors.chatInputCandidates) {
+      try {
+        const isOpen = await this.page.locator(inputSel).first().isVisible().catch(() => false);
+        if (isOpen) {
+          logger.debug('Chat panel already open');
+          return;
+        }
+      } catch {
+        // Try next
+      }
     }
 
-    try {
-      const chatBtn = this.page.locator(selectors.chatButton).first();
-      await chatBtn.click({ timeout: 5000 });
-      // Wait for chat input to appear (confirms panel is open)
-      await this.page.locator(selectors.chatInput).waitFor({ state: 'visible', timeout: 5000 });
-    } catch {
-      logger.warn('Could not open chat panel');
+    // Try each chat button candidate
+    for (const btnSel of selectors.chatButtonCandidates) {
+      try {
+        const btn = this.page.locator(btnSel).first();
+        if (await btn.isVisible({ timeout: 1000 })) {
+          await btn.click({ timeout: 3000 });
+          logger.info(`Opened chat via: ${btnSel}`);
+
+          // Wait for any chat input candidate to appear
+          for (const inputSel of selectors.chatInputCandidates) {
+            try {
+              await this.page.locator(inputSel).waitFor({ state: 'visible', timeout: 3000 });
+              logger.info(`Chat input found: ${inputSel}`);
+              return;
+            } catch {
+              // Try next input selector
+            }
+          }
+          // Button clicked but no input found — still might have opened
+          logger.warn('Chat button clicked but input not found with any selector');
+          return;
+        }
+      } catch {
+        // Try next button selector
+      }
     }
+
+    logger.warn('Could not open chat panel — no chat button matched');
   }
 
   async leave(): Promise<void> {
@@ -323,21 +403,14 @@ export class MeetManager extends EventEmitter {
 
     try {
       if (this.page) {
-        // Dismiss any modals that might be blocking the leave button
-        await this.dismissModals();
-
-        const leaveBtn = this.page.locator(selectors.leaveButton).first();
-        if (await leaveBtn.isVisible({ timeout: 2000 })) {
-          await leaveBtn.click({ timeout: 5000 });
-          logger.info('Clicked leave button');
-          // Wait for the leave action to take effect before closing browser
-          await this.page.waitForTimeout(2000);
-        } else {
-          logger.warn('Leave button not visible');
-        }
+        // Navigate away from Meet — this instantly leaves the call.
+        // Faster and more reliable than clicking the leave button,
+        // which can be blocked by modals or overlays.
+        await this.page.goto('about:blank', { timeout: 5000 });
+        logger.info('Left the meeting');
       }
     } catch (err) {
-      logger.warn(`Could not click leave button: ${err}`);
+      logger.warn(`Could not leave meeting cleanly: ${err}`);
     }
 
     await this.cleanup();
