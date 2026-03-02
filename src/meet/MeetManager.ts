@@ -402,15 +402,17 @@ export class MeetManager extends EventEmitter {
     }
 
     try {
-      if (this.page) {
+      if (this.page && this.browser?.isConnected()) {
         // Navigate away from Meet — this instantly leaves the call.
         // Faster and more reliable than clicking the leave button,
         // which can be blocked by modals or overlays.
         await this.page.goto('about:blank', { timeout: 5000 });
-        logger.info('Left the meeting');
       }
+      logger.info('Left the meeting');
     } catch (err) {
-      logger.warn(`Could not leave meeting cleanly: ${err}`);
+      // Browser may already be dead (e.g. Ctrl+C killed Chromium via process group).
+      // That's fine — severed WebRTC connection means we've left the call.
+      logger.info('Left the meeting (browser already closed)');
     }
 
     await this.cleanup();

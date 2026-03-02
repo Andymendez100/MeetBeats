@@ -140,6 +140,13 @@ export class MeetBeatsBot {
 
     logger.info('Shutting down...');
 
+    // Safety net: force exit if graceful shutdown stalls (e.g. browser cleanup hangs)
+    const forceExit = setTimeout(() => {
+      logger.error('Shutdown timed out after 8s — forcing exit');
+      process.exit(1);
+    }, 8000);
+    forceExit.unref();
+
     if (this.participantCheckInterval) {
       clearInterval(this.participantCheckInterval);
       this.participantCheckInterval = null;
