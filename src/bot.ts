@@ -17,6 +17,9 @@ export class MeetBeatsBot {
   private youtubeService: YouTubeService;
   private downloader: Downloader;
   private deps: HandlerDeps;
+  private shutdownResolve: (() => void) | null = null;
+  private participantCheckInterval: ReturnType<typeof setInterval> | null = null;
+  private shuttingDown = false;
 
   constructor() {
     this.meetManager = new MeetManager();
@@ -32,6 +35,10 @@ export class MeetBeatsBot {
       youtubeService: this.youtubeService,
       downloader: this.downloader,
       meetManager: this.meetManager,
+      onExit: () => {
+        logger.info('Exit command received');
+        this.shutdown();
+      },
     };
   }
 
@@ -72,17 +79,46 @@ export class MeetBeatsBot {
       this.shutdown();
     });
 
+    // Monitor participant count — leave if bot is alone
+    this.startParticipantMonitor();
+
     logger.info(`${config.botName} is running. Listening for commands in chat.`);
 
-    // Keep the process alive
+    // Keep the process alive until shutdown
     await new Promise<void>((resolve) => {
+      this.shutdownResolve = resolve;
       const onSignal = () => {
         logger.info('Received shutdown signal');
-        this.shutdown().then(resolve);
+        this.shutdown();
       };
       process.on('SIGINT', onSignal);
       process.on('SIGTERM', onSignal);
     });
+  }
+
+  private startParticipantMonitor(): void {
+    // Check every 15 seconds if the bot is alone in the meeting
+    this.participantCheckInterval = setInterval(async () => {
+      try {
+        const page = this.meetManager.getPage();
+        const count = await page.evaluate(() => {
+          // Look for participant count in the toolbar
+          const el = document.querySelector('[aria-label*="participant" i]');
+          const text = el?.textContent || '';
+          const match = text.match(/(\d+)/);
+          return match ? parseInt(match[1], 10) : -1;
+        });
+
+        if (count === 1) {
+          logger.info('Bot is alone in the meeting. Leaving...');
+          await this.shutdown();
+        } else if (count > 0) {
+          logger.debug(`Participants: ${count}`);
+        }
+      } catch {
+        // Page may not be available during shutdown
+      }
+    }, 15000);
   }
 
   private async handleChatMessage(msg: ChatMessage): Promise<void> {
@@ -92,10 +128,29 @@ export class MeetBeatsBot {
   }
 
   async shutdown(): Promise<void> {
+    // Guard against re-entrant calls (leave emits 'left' which triggers shutdown again)
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
+
     logger.info('Shutting down...');
-    this.audioPlayer.stop();
+
+    if (this.participantCheckInterval) {
+      clearInterval(this.participantCheckInterval);
+      this.participantCheckInterval = null;
+    }
+
+    await this.audioPlayer.stop();
     this.chatMonitor.stop();
     await this.meetManager.leave();
+
     logger.info('Shutdown complete');
+
+    if (this.shutdownResolve) {
+      this.shutdownResolve();
+      this.shutdownResolve = null;
+    }
+
+    // Exit the process (ensures Docker container stops)
+    process.exit(0);
   }
 }

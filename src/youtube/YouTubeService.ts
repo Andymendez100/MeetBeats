@@ -1,4 +1,4 @@
-import { Innertube } from 'youtubei.js';
+import { Innertube, UniversalCache } from 'youtubei.js';
 import { logger } from '../utils/logger.js';
 import { Song } from '../audio/types.js';
 
@@ -8,13 +8,19 @@ export class YouTubeService {
   private yt: InnertubeInstance | null = null;
 
   async init(): Promise<void> {
-    this.yt = await Innertube.create();
+    this.yt = await Innertube.create({
+      cache: new UniversalCache(true),
+    });
     logger.info('YouTube service initialized');
   }
 
-  private getYt(): InnertubeInstance {
+  getInnertube(): InnertubeInstance {
     if (!this.yt) throw new Error('YouTubeService not initialized. Call init() first.');
     return this.yt;
+  }
+
+  private getYt(): InnertubeInstance {
+    return this.getInnertube();
   }
 
   async search(query: string): Promise<Omit<Song, 'requestedBy'> | null> {

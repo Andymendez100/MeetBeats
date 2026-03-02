@@ -13,6 +13,7 @@ export interface HandlerDeps {
   youtubeService: YouTubeService;
   downloader: Downloader;
   meetManager: MeetManager;
+  onExit?: () => void;
 }
 
 type Handler = (cmd: ParsedCommand, deps: HandlerDeps) => Promise<void>;
@@ -89,7 +90,7 @@ const handlers: Record<string, Handler> = {
   },
 
   async skip(_cmd, deps) {
-    deps.audioPlayer.stop();
+    await deps.audioPlayer.stop();
     const next = deps.queueManager.advance();
     if (next) {
       await playNextInQueue(deps);
@@ -99,18 +100,18 @@ const handlers: Record<string, Handler> = {
   },
 
   async stop(_cmd, deps) {
-    deps.audioPlayer.stop();
+    await deps.audioPlayer.stop();
     deps.queueManager.clear();
     await reply(deps, 'Playback stopped and queue cleared.');
   },
 
   async pause(_cmd, deps) {
-    deps.audioPlayer.pause();
+    await deps.audioPlayer.pause();
     await reply(deps, 'Paused.');
   },
 
   async resume(_cmd, deps) {
-    deps.audioPlayer.resume();
+    await deps.audioPlayer.resume();
     await reply(deps, 'Resumed.');
   },
 
@@ -215,9 +216,15 @@ const handlers: Record<string, Handler> = {
       '!shuffle - Shuffle queue',
       '!loop - Toggle loop (off/song/queue)',
       '!remove <pos> - Remove from queue',
+      '!exit - Bot leaves the meeting',
     ].join('\n');
 
     await reply(deps, helpText);
+  },
+
+  async exit(_cmd, deps) {
+    await reply(deps, 'Bye! 👋');
+    if (deps.onExit) deps.onExit();
   },
 };
 

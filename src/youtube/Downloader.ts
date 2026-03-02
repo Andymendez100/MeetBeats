@@ -14,30 +14,50 @@ export class Downloader {
 
   async download(url: string): Promise<string> {
     const videoId = this.extractId(url);
-    const outputPath = path.join(this.cacheDir, `${videoId}.wav`);
+    // yt-dlp adds the extension itself, so use a template
+    const outputTemplate = path.join(this.cacheDir, videoId);
+    const expectedPath = `${outputTemplate}.opus`;
+    const altPath = `${outputTemplate}.webm`;
+    const altPath2 = `${outputTemplate}.m4a`;
 
     // Return cached file if it exists
-    if (fs.existsSync(outputPath)) {
-      logger.debug(`Cache hit: ${outputPath}`);
-      return outputPath;
+    for (const p of [expectedPath, altPath, altPath2]) {
+      if (fs.existsSync(p)) {
+        logger.debug(`Cache hit: ${p}`);
+        return p;
+      }
     }
 
     logger.info(`Downloading: ${url}`);
-
-    await this.runYtDlp(url, outputPath);
+    await this.runYtDlp(url, outputTemplate);
     await this.cleanCache();
 
-    return outputPath;
+    // Find whichever file yt-dlp created
+    for (const p of [expectedPath, altPath, altPath2]) {
+      if (fs.existsSync(p)) {
+        logger.info(`Downloaded: ${p}`);
+        return p;
+      }
+    }
+
+    // Check for any file matching the video ID
+    const files = fs.readdirSync(this.cacheDir).filter(f => f.startsWith(videoId));
+    if (files.length > 0) {
+      const found = path.join(this.cacheDir, files[0]);
+      logger.info(`Downloaded: ${found}`);
+      return found;
+    }
+
+    throw new Error(`Download completed but output file not found for ${videoId}`);
   }
 
-  private runYtDlp(url: string, outputPath: string): Promise<void> {
+  private runYtDlp(url: string, outputTemplate: string): Promise<void> {
     return new Promise((resolve, reject) => {
       const args = [
         '-x',                          // Extract audio
-        '--audio-format', 'wav',       // Output as WAV
-        '--audio-quality', '0',        // Best quality
-        '-o', outputPath,              // Output path
-        '--no-playlist',               // Don't download playlists
+        '--audio-format', 'opus',      // Lightweight format ffplay supports
+        '-o', `${outputTemplate}.%(ext)s`,
+        '--no-playlist',
         '--no-warnings',
         url,
       ];
@@ -51,7 +71,6 @@ export class Downloader {
 
       proc.on('close', (code) => {
         if (code === 0) {
-          logger.info(`Downloaded: ${outputPath}`);
           resolve();
         } else {
           reject(new Error(`yt-dlp exited with code ${code}: ${stderr}`));
@@ -59,7 +78,7 @@ export class Downloader {
       });
 
       proc.on('error', (err) => {
-        reject(new Error(`Failed to spawn yt-dlp: ${err.message}`));
+        reject(new Error(`Failed to spawn yt-dlp. Install it: brew install yt-dlp\n${err.message}`));
       });
     });
   }
@@ -67,13 +86,12 @@ export class Downloader {
   private async cleanCache(): Promise<void> {
     try {
       const files = fs.readdirSync(this.cacheDir)
-        .filter(f => f.endsWith('.wav'))
         .map(f => {
           const fullPath = path.join(this.cacheDir, f);
           const stat = fs.statSync(fullPath);
           return { path: fullPath, size: stat.size, mtime: stat.mtimeMs };
         })
-        .sort((a, b) => b.mtime - a.mtime); // newest first
+        .sort((a, b) => b.mtime - a.mtime);
 
       const maxBytes = config.maxCacheSizeMb * 1024 * 1024;
       let totalSize = 0;

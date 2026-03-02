@@ -23,6 +23,7 @@ const VALID_COMMANDS = new Set([
   'loop',
   'remove',
   'help',
+  'exit',
 ]);
 
 export function parseCommand(sender: string, text: string): ParsedCommand | null {

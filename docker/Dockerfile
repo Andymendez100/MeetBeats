@@ -64,9 +64,11 @@ RUN chmod +x /entrypoint.sh
 # Create cache directory
 RUN mkdir -p /tmp/meetbeats
 
-# PulseAudio needs a runtime directory
+# PulseAudio runtime directories
 ENV XDG_RUNTIME_DIR=/tmp/runtime
-RUN mkdir -p /tmp/runtime && chmod 700 /tmp/runtime
+ENV HOME=/root
+RUN mkdir -p /tmp/runtime && chmod 700 /tmp/runtime \
+    && mkdir -p /root/.config/pulse
 
 # Set display for Xvfb
 ENV DISPLAY=:99

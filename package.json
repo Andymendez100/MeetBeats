@@ -9,10 +9,14 @@
     "dev": "tsc --watch",
     "setup-auth": "npx tsx scripts/setup-auth.ts",
     "docker:build": "docker compose -f docker/docker-compose.yml build",
-    "docker:up": "docker compose -f docker/docker-compose.yml up",
+    "docker:join": "docker compose -f docker/docker-compose.yml run --rm meetbeats",
     "docker:down": "docker compose -f docker/docker-compose.yml down"
   },
-  "keywords": ["google-meet", "music-bot", "youtube"],
+  "keywords": [
+    "google-meet",
+    "music-bot",
+    "youtube"
+  ],
   "license": "MIT",
   "devDependencies": {
     "@types/node": "^20.11.0",
@@ -20,6 +24,7 @@
     "typescript": "^5.3.3"
   },
   "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
     "dotenv": "^16.3.1",
     "playwright": "^1.41.0",
     "winston": "^3.11.0",

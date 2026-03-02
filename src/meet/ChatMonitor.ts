@@ -22,6 +22,11 @@ export class ChatMonitor extends EventEmitter {
     // Ensure chat panel is open
     await this.meetManager.openChatPanel();
 
+    // Wait for the chat message list container to appear
+    await page.waitForSelector('div[jsname="xySENc"]', { state: 'attached', timeout: 10000 }).catch(() => {
+      logger.warn('Chat message list container not found, will retry in evaluate');
+    });
+
     // Expose a function that the browser context can call to send messages to Node.js
     await page.exposeFunction('__meetbeats_onChatMessage', (sender: string, text: string) => {
       const message: ChatMessage = {
@@ -29,74 +34,88 @@ export class ChatMonitor extends EventEmitter {
         text,
         timestamp: new Date(),
       };
-      logger.debug(`Chat message from ${sender}: ${text}`);
+      logger.info(`Chat message from ${sender}: ${text}`);
       this.emit('message', message);
     });
 
     // Inject MutationObserver to watch for new chat messages
     await page.evaluate(() => {
-      // Find the chat message container
       const findChatContainer = (): Element | null => {
-        // Try multiple selectors for the chat message list
-        const candidates = [
-          document.querySelector('[aria-label="Chat with everyone"]'),
-          document.querySelector('[data-is-chat-history]'),
-          // Fallback: find container that holds chat messages
-          ...Array.from(document.querySelectorAll('div[role="list"]')),
-        ];
+        // Primary: the message list container
+        const primary = document.querySelector('div[jsname="xySENc"]');
+        if (primary) return primary;
 
-        for (const el of candidates) {
-          if (el) return el;
-        }
+        // Fallback: the chat panel itself
+        const panel = document.querySelector('#ME4pNd');
+        if (panel) return panel;
+
         return null;
       };
+
+      let retryCount = 0;
+      const MAX_RETRIES = 30;
 
       const setupObserver = () => {
         const container = findChatContainer();
         if (!container) {
-          // Retry after a short delay
-          setTimeout(setupObserver, 1000);
+          retryCount++;
+          if (retryCount <= MAX_RETRIES) {
+            setTimeout(setupObserver, 1000);
+          } else {
+            console.error('[MeetBeats] Could not find chat container after retries');
+          }
           return;
         }
 
-        // Track messages we've already seen to avoid duplicates
-        const seenMessages = new Set<string>();
+        console.log('[MeetBeats] Chat container found, attaching observer');
+
+        // Track seen message IDs to avoid duplicates
+        const seenMessageIds = new Set<string>();
+
+        const processMessage = (node: HTMLElement) => {
+          // Skip the bot's own messages (they have class chmVPb)
+          if (node.querySelector('.chmVPb')) return;
+
+          // Get message ID for deduplication
+          const msgEl = node.querySelector('[data-message-id]');
+          const msgId = msgEl?.getAttribute('data-message-id') || '';
+          if (msgId && seenMessageIds.has(msgId)) return;
+          if (msgId) seenMessageIds.add(msgId);
+
+          // Extract sender name
+          const senderEl = node.querySelector('div.poVWob');
+          const sender = senderEl?.textContent?.trim() || 'Unknown';
+
+          // Extract message text
+          const textEl = node.querySelector('div[jsname="dTKtvb"]');
+          const text = textEl?.textContent?.trim() || '';
+
+          if (!text) return;
+
+          // Prevent memory leak
+          if (seenMessageIds.size > 500) {
+            const entries = Array.from(seenMessageIds);
+            for (let i = 0; i < 250; i++) {
+              seenMessageIds.delete(entries[i]);
+            }
+          }
+
+          (window as any).__meetbeats_onChatMessage(sender, text);
+        };
 
         const observer = new MutationObserver((mutations) => {
           for (const mutation of mutations) {
             for (const node of mutation.addedNodes) {
               if (!(node instanceof HTMLElement)) continue;
 
-              // Extract sender and message text from the new chat node
-              const senderEl =
-                node.querySelector('[data-sender-name]') ||
-                node.querySelector('span[class]');
-              const textEl =
-                node.querySelector('[data-message-text]') ||
-                node.querySelector('div[class] > span');
-
-              if (!senderEl || !textEl) continue;
-
-              const sender = senderEl.textContent?.trim() || 'Unknown';
-              const text = textEl.textContent?.trim() || '';
-
-              if (!text) continue;
-
-              // Deduplicate
-              const key = `${sender}:${text}:${Date.now() - (Date.now() % 2000)}`;
-              if (seenMessages.has(key)) continue;
-              seenMessages.add(key);
-
-              // Prevent memory leak — keep set bounded
-              if (seenMessages.size > 500) {
-                const entries = Array.from(seenMessages);
-                for (let i = 0; i < 250; i++) {
-                  seenMessages.delete(entries[i]);
-                }
+              // Check if this is a message item (jsname="Ypafjf")
+              if (node.getAttribute('jsname') === 'Ypafjf') {
+                processMessage(node);
+              } else {
+                // Could be a wrapper — check children
+                const msgItems = node.querySelectorAll('div[jsname="Ypafjf"]');
+                msgItems.forEach((item) => processMessage(item as HTMLElement));
               }
-
-              // Send to Node.js
-              (window as any).__meetbeats_onChatMessage(sender, text);
             }
           }
         });

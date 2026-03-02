@@ -1,0 +1,21 @@
+#!/bin/bash
+# MeetBeats — Google Meet music bot
+# Usage: ./meetbeats <google-meet-url>
+
+set -e
+
+if [ -z "$1" ]; then
+  echo "Usage: ./meetbeats <google-meet-url>"
+  echo "Example: ./meetbeats https://meet.google.com/abc-defg-hij"
+  exit 1
+fi
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Build if image doesn't exist
+if ! docker image inspect docker-meetbeats >/dev/null 2>&1; then
+  echo "Building MeetBeats Docker image (first time only)..."
+  docker compose -f "$SCRIPT_DIR/docker/docker-compose.yml" build
+fi
+
+exec docker compose -f "$SCRIPT_DIR/docker/docker-compose.yml" run --rm meetbeats "$1"
