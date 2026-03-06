@@ -36,8 +36,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     # Cleanup
     && rm -rf /var/lib/apt/lists/*
 
-# Install yt-dlp
-RUN pip3 install --break-system-packages yt-dlp
+# Install yt-dlp (--no-cache-dir ensures fresh version on rebuild)
+RUN pip3 install --break-system-packages --no-cache-dir yt-dlp
 
 # Set up working directory
 WORKDIR /app

@@ -48,6 +48,31 @@ export class YouTubeService {
     }
   }
 
+  async searchMultiple(query: string, count: number = 5): Promise<Omit<Song, 'requestedBy'>[]> {
+    try {
+      const result = await this.runYtDlp([
+        `ytsearch${count}:${query}`,
+        '--dump-json',
+        '--flat-playlist',
+        '--no-warnings',
+      ]);
+
+      const songs: Omit<Song, 'requestedBy'>[] = [];
+      for (const line of result.split('\n').filter(Boolean)) {
+        const data: YtDlpResult = JSON.parse(line);
+        songs.push({
+          title: data.title || 'Unknown',
+          url: data.webpage_url || data.url || `https://www.youtube.com/watch?v=${data.id}`,
+          duration: data.duration || 0,
+        });
+      }
+      return songs;
+    } catch (err) {
+      logger.error(`YouTube multi-search failed: ${err}`);
+      return [];
+    }
+  }
+
   async getInfo(url: string): Promise<Omit<Song, 'requestedBy'> | null> {
     try {
       const result = await this.runYtDlp([

@@ -15,6 +15,7 @@ export interface HandlerDeps {
   downloader: Downloader;
   meetManager: MeetManager;
   onExit?: () => void;
+  onAutoplayTrigger?: () => void;
 }
 
 type Handler = (cmd: ParsedCommand, deps: HandlerDeps) => Promise<void>;
@@ -194,6 +195,16 @@ const handlers: Record<string, Handler> = {
     await reply(deps, `Loop mode: ${mode}`);
   },
 
+  async autoplay(_cmd, deps) {
+    const enabled = deps.queueManager.toggleAutoplay();
+    await reply(deps, `Autoplay: ${enabled ? 'ON — will keep playing related songs' : 'OFF'}`);
+
+    // If toggled on and nothing is playing, kick off autoplay immediately
+    if (enabled && !deps.audioPlayer.isPlaying() && !deps.audioPlayer.isPaused() && deps.onAutoplayTrigger) {
+      deps.onAutoplayTrigger();
+    }
+  },
+
   async remove(cmd, deps) {
     const pos = parseInt(cmd.args, 10);
     if (isNaN(pos) || pos < 1) {
@@ -223,6 +234,7 @@ const handlers: Record<string, Handler> = {
       `${prefix}playlist <url> - Queue a playlist`,
       `${prefix}shuffle - Shuffle queue`,
       `${prefix}loop - Toggle loop (off/song/queue)`,
+      `${prefix}autoplay - Auto-play related songs when queue ends`,
       `${prefix}remove <pos> - Remove from queue`,
       `${prefix}exit - Bot leaves the meeting`,
     ].join('\n');

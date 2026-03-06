@@ -14,7 +14,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
     volumes:
       # Mount auth state from host (created by setup-auth)
-      - ../auth:/app/auth:ro
+      - ../auth:/app/auth
       # Persistent cache for downloaded audio
       - meetbeats-cache:/tmp/meetbeats
     # Needed for PulseAudio and Xvfb

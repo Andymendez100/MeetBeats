@@ -125,6 +125,17 @@ export class MeetManager extends EventEmitter {
     await this.disableAudioFilters();
 
     logger.info('Successfully joined meeting');
+
+    // Refresh saved auth state so cookies don't expire between runs
+    try {
+      if (this.context) {
+        await this.context.storageState({ path: config.authStatePath });
+        logger.info('Auth state refreshed');
+      }
+    } catch (err) {
+      logger.warn(`Could not refresh auth state: ${err}`);
+    }
+
     this.emit('joined');
   }
 
@@ -217,7 +228,16 @@ export class MeetManager extends EventEmitter {
 
   private async clickJoin(): Promise<void> {
     const joinBtn = this.page!.locator(selectors.joinButton).first();
-    await joinBtn.waitFor({ state: 'visible', timeout: 15000 });
+    try {
+      await joinBtn.waitFor({ state: 'visible', timeout: 15000 });
+    } catch {
+      // Debug: screenshot + page text to see what Meet is showing
+      await this.page!.screenshot({ path: '/tmp/debug-join-button.png' }).catch(() => {});
+      const bodyText = await this.page!.locator('body').innerText().catch(() => '(could not read)');
+      logger.error(`Join button not found. Page text: ${bodyText.slice(0, 500)}`);
+      logger.error('Debug screenshot saved to /tmp/debug-join-button.png');
+      throw new Error('Join button not found — check /tmp/debug-join-button.png');
+    }
     await joinBtn.click();
     logger.info('Clicked join button');
   }
@@ -388,6 +408,26 @@ export class MeetManager extends EventEmitter {
       } catch {
         // Try next button selector
       }
+    }
+
+    // Debug: dump all toolbar button aria-labels and take screenshot
+    try {
+      const buttonLabels = await this.page.evaluate(() => {
+        const buttons = document.querySelectorAll('button[aria-label]');
+        return Array.from(buttons).map(b => ({
+          label: b.getAttribute('aria-label'),
+          visible: (b as HTMLElement).offsetParent !== null,
+          classes: b.className.slice(0, 80),
+        }));
+      });
+      logger.warn(`All buttons on page (${buttonLabels.length}):`);
+      for (const b of buttonLabels.filter(b => b.visible)) {
+        logger.warn(`  [button] aria-label="${b.label}" class="${b.classes}"`);
+      }
+      await this.page.screenshot({ path: '/tmp/debug-chat-button.png' }).catch(() => {});
+      logger.warn('Debug screenshot saved to /tmp/debug-chat-button.png');
+    } catch {
+      // Debug logging failed, not critical
     }
 
     logger.warn('Could not open chat panel — no chat button matched');

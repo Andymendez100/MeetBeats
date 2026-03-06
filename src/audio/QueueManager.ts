@@ -5,6 +5,8 @@ export class QueueManager {
   private songs: Song[] = [];
   private currentIndex = -1;
   private loopMode: LoopMode = 'off';
+  private autoplay = true;
+  private lastPlayed: Song | null = null;
 
   add(song: Song): number {
     this.songs.push(song);
@@ -40,6 +42,7 @@ export class QueueManager {
 
       case 'off':
       default:
+        this.lastPlayed = this.current();
         this.currentIndex++;
         if (this.currentIndex >= this.songs.length) {
           // Queue exhausted
@@ -115,6 +118,20 @@ export class QueueManager {
     this.songs = [];
     this.currentIndex = -1;
     logger.debug('Queue cleared');
+  }
+
+  toggleAutoplay(): boolean {
+    this.autoplay = !this.autoplay;
+    logger.debug(`Autoplay: ${this.autoplay ? 'on' : 'off'}`);
+    return this.autoplay;
+  }
+
+  isAutoplay(): boolean {
+    return this.autoplay;
+  }
+
+  getLastPlayed(): Song | null {
+    return this.lastPlayed;
   }
 
   get length(): number {

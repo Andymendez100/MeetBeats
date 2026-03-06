@@ -163,6 +163,7 @@ export class ChatMonitor extends EventEmitter {
         });
 
         observer.observe(container, { childList: true, subtree: true });
+        (window as any).__meetbeats_observerAlive = true;
         console.log('[MeetBeats] MutationObserver active on chat container');
 
         // Self-healing: detect when Meet re-renders the chat container (detaches our node).
@@ -171,6 +172,7 @@ export class ChatMonitor extends EventEmitter {
           if (!document.body.contains(container)) {
             console.log('[MeetBeats] Chat container was detached from DOM — re-attaching observer');
             observer.disconnect();
+            (window as any).__meetbeats_observerAlive = false;
             clearInterval(watchdog);
             retryCount = 0;
             setupObserver();
@@ -184,11 +186,13 @@ export class ChatMonitor extends EventEmitter {
     this.running = true;
     logger.info('Chat monitor started');
 
-    // Periodic health check — re-open chat panel if it gets closed
+    // Periodic health check — re-open chat panel and re-inject observer if dead
     this.healthCheckInterval = setInterval(async () => {
       if (!this.running) return;
       try {
         const p = this.meetManager.getPage();
+
+        // Check if chat panel is open
         let chatOpen = false;
         for (const inputSel of selectors.chatInputCandidates) {
           chatOpen = await p.locator(inputSel).first().isVisible().catch(() => false);
@@ -197,6 +201,103 @@ export class ChatMonitor extends EventEmitter {
         if (!chatOpen) {
           logger.warn('Chat panel closed — re-opening');
           await this.meetManager.openChatPanel();
+        }
+
+        // Check if observer is still alive (page re-render kills it)
+        const observerAlive = await p.evaluate(() => {
+          return !!(window as any).__meetbeats_observerAlive;
+        }).catch(() => false);
+
+        if (!observerAlive) {
+          logger.warn('Chat observer dead — re-injecting');
+          // Re-expose the callback if the page context was destroyed
+          try {
+            await p.exposeFunction('__meetbeats_onChatMessage', (sender: string, text: string) => {
+              const message: ChatMessage = {
+                sender,
+                text,
+                timestamp: new Date(),
+              };
+              logger.info(`Chat message from ${sender}: ${text}`);
+              this.emit('message', message);
+            });
+          } catch {
+            // Already exposed in this context — that's fine
+          }
+
+          await p.evaluate((candidates: string[]) => {
+            const findChatContainer = (): Element | null => {
+              for (const sel of candidates) {
+                const el = document.querySelector(sel);
+                if (el) return el;
+              }
+              return null;
+            };
+
+            const container = findChatContainer();
+            if (!container) {
+              console.log('[MeetBeats] Re-inject: no chat container found');
+              return;
+            }
+
+            console.log('[MeetBeats] Re-injecting chat observer');
+
+            const seenMessageIds = new Set<string>();
+            const recentTexts = new Map<string, number>();
+
+            const isDuplicate = (msgId: string, text: string): boolean => {
+              if (msgId && seenMessageIds.has(msgId)) return true;
+              if (msgId) seenMessageIds.add(msgId);
+              const now = Date.now();
+              const lastSeen = recentTexts.get(text);
+              if (lastSeen && now - lastSeen < 2000) return true;
+              recentTexts.set(text, now);
+              return false;
+            };
+
+            const processMessage = (node: HTMLElement) => {
+              if (node.querySelector('.chmVPb')) return;
+              if (node.classList.contains('chmVPb')) return;
+              const senderEl = node.querySelector('div.poVWob');
+              const sender = senderEl?.textContent?.trim() || '';
+              if (!sender) return;
+              const textEl = node.querySelector('div[jsname="dTKtvb"]');
+              const text = textEl?.textContent?.trim() || '';
+              if (!text) return;
+              const msgEl = node.querySelector('[data-message-id]');
+              const msgId = msgEl?.getAttribute('data-message-id') || '';
+              if (isDuplicate(msgId, text)) return;
+              console.log(`[MeetBeats] Chat received: ${sender}: ${text}`);
+              (window as any).__meetbeats_onChatMessage(sender, text);
+            };
+
+            const observer = new MutationObserver((mutations) => {
+              for (const mutation of mutations) {
+                for (const node of mutation.addedNodes) {
+                  if (!(node instanceof HTMLElement)) continue;
+                  if (node.getAttribute('jsname') === 'Ypafjf') {
+                    processMessage(node);
+                  } else {
+                    node.querySelectorAll('div[jsname="Ypafjf"]').forEach((item) => processMessage(item as HTMLElement));
+                  }
+                }
+              }
+            });
+
+            observer.observe(container, { childList: true, subtree: true });
+            (window as any).__meetbeats_observerAlive = true;
+            console.log('[MeetBeats] Chat observer re-injected successfully');
+
+            // Watchdog for this observer too
+            const watchdog = setInterval(() => {
+              if (!document.body.contains(container)) {
+                console.log('[MeetBeats] Chat container detached from DOM');
+                observer.disconnect();
+                clearInterval(watchdog);
+                (window as any).__meetbeats_observerAlive = false;
+              }
+            }, 3000);
+          }, containerCandidates);
         }
       } catch {
         // Page may not be available

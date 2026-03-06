@@ -88,6 +88,10 @@ else
   rm -f /tmp/test_tone.wav
 fi
 
+# Update yt-dlp to latest (YouTube changes break older versions)
+echo "Updating yt-dlp..."
+pip3 install --break-system-packages -q --upgrade yt-dlp 2>/dev/null || echo "WARNING: yt-dlp update failed, using bundled version"
+
 echo ""
 echo "=== Starting MeetBeats Bot ==="
 

@@ -56,7 +56,7 @@ export class Downloader {
     return new Promise((resolve, reject) => {
       const args = [
         ...baseYtDlpArgs(),
-        '-f', 'bestaudio/best',
+        '-f', 'bestaudio[acodec!=none]/bestaudio/best',
         '-x',
         '--audio-format', 'opus',
         '-o', `${outputTemplate}.%(ext)s`,
